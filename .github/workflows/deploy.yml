@@ -1,0 +1,211 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - release
+  pull_request:
+    branches:
+      - main
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run unit tests
+        run: npm test -- --testPathPattern=test/unit --coverage
+        env:
+          POWERTOOLS_DEV: 'true'
+          SKIP_INTEGRATION: 'true'
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+
+      - name: CDK Synth (validate)
+        run: npx cdk synth --context env=dev --quiet
+        env:
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: us-east-1
+
+  deploy-dev:
+    name: Deploy to Dev
+    needs: test
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release'
+    runs-on: ubuntu-latest
+    environment: dev
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: CDK Bootstrap (idempotent)
+        run: npx cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/us-east-1 --quiet
+
+      - name: Deploy to Dev
+        run: npm run deploy:dev
+        env:
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+
+      - name: Run smoke tests (dev)
+        run: |
+          echo "Running basic smoke test against dev..."
+          GRAPHQL_URL=$(aws cloudformation describe-stacks \
+            --stack-name ApiStack-dev-us-east-1 \
+            --query "Stacks[0].Outputs[?OutputKey=='GraphqlUrl'].OutputValue" \
+            --output text)
+          echo "AppSync endpoint: $GRAPHQL_URL"
+          # Unauthenticated introspection should return schema
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "$GRAPHQL_URL" \
+            -H "Content-Type: application/json" \
+            -d '{"query":"{__typename}"}')
+          echo "Response status: $HTTP_STATUS"
+          # 401 is expected — means API is up but requires auth
+          [ "$HTTP_STATUS" = "401" ] || [ "$HTTP_STATUS" = "200" ]
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: deploy-dev
+    if: github.ref == 'refs/heads/release'
+    runs-on: ubuntu-latest
+    environment: staging
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: CDK Bootstrap (idempotent)
+        run: npx cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/us-east-1 --quiet
+
+      - name: Deploy to Staging
+        run: npm run deploy:staging
+        env:
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+
+      - name: Run staging smoke tests
+        run: |
+          echo "Running integration smoke tests against staging..."
+          GRAPHQL_URL=$(aws cloudformation describe-stacks \
+            --stack-name ApiStack-staging-us-east-1 \
+            --query "Stacks[0].Outputs[?OutputKey=='GraphqlUrl'].OutputValue" \
+            --output text)
+          STATE_MACHINE_ARN=$(aws cloudformation describe-stacks \
+            --stack-name BookingStack-staging-us-east-1 \
+            --query "Stacks[0].Outputs[?OutputKey=='StateMachineArn'].OutputValue" \
+            --output text)
+          FLIGHTS_TABLE="airline-flights-staging"
+          BOOKINGS_TABLE="airline-bookings-staging"
+          STATE_MACHINE_ARN="$STATE_MACHINE_ARN" \
+            FLIGHTS_TABLE="$FLIGHTS_TABLE" \
+            BOOKINGS_TABLE="$BOOKINGS_TABLE" \
+            npx jest test/integration --forceExit
+        env:
+          AWS_REGION: us-east-1
+
+  approve:
+    name: Await Production Approval
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/release'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Awaiting approval
+        run: echo "Production deployment approved."
+
+  deploy-prod:
+    name: Deploy to Production
+    needs: approve
+    if: github.ref == 'refs/heads/release'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: CDK Bootstrap (both regions)
+        run: |
+          npx cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/us-east-1 --quiet
+          npx cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/eu-west-1 --quiet
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      - name: Deploy to Production (multi-region)
+        run: npm run deploy:prod
+        env:
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+        # CodeDeploy shifts 10% traffic, monitors for 5 min, then 100%
+        # PaymentFailureAlarm triggers automatic rollback if needed
