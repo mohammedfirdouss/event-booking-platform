@@ -1,0 +1,49 @@
+{
+  "name": "event-booking-platform",
+  "version": "1.0.0",
+  "description": "Event-driven airline booking platform built with AWS CDK",
+  "scripts": {
+    "build": "tsc -p tsconfig.cdk.json",
+    "watch": "tsc -w -p tsconfig.cdk.json",
+    "test": "jest",
+    "lint": "eslint . --ext .ts",
+    "cdk": "cdk",
+    "synth": "cdk synth",
+    "deploy:dev": "cdk deploy --all --context env=dev --require-approval never",
+    "deploy:staging": "cdk deploy --all --context env=staging --require-approval never",
+    "deploy:prod": "cdk deploy --all --context env=prod --require-approval never",
+    "destroy": "cdk destroy --all"
+  },
+  "dependencies": {
+    "@aws-crypto/sha256-js": "^5.2.0",
+    "@aws-lambda-powertools/logger": "^2.2.0",
+    "@aws-lambda-powertools/metrics": "^2.2.0",
+    "@aws-lambda-powertools/parameters": "^2.2.0",
+    "@aws-lambda-powertools/tracer": "^2.2.0",
+    "@aws-sdk/client-appsync": "^3.550.0",
+    "@aws-sdk/client-dynamodb": "^3.550.0",
+    "@aws-sdk/client-eventbridge": "^3.550.0",
+    "@aws-sdk/client-sfn": "^3.550.0",
+    "@aws-sdk/client-sns": "^3.550.0",
+    "@aws-sdk/lib-dynamodb": "^3.550.0",
+    "@smithy/signature-v4": "^3.1.1",
+    "aws-cdk-lib": "^2.140.0",
+    "constructs": "^10.3.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.137",
+    "@types/jest": "^29.5.12",
+    "@types/node": "^20.12.7",
+    "@typescript-eslint/eslint-plugin": "^7.7.0",
+    "@typescript-eslint/parser": "^7.7.0",
+    "aws-cdk": "^2.140.0",
+    "aws-sdk-client-mock": "^4.0.1",
+    "aws-sdk-client-mock-jest": "^4.0.1",
+    "esbuild": "^0.20.2",
+    "eslint": "^8.57.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}
