@@ -1,0 +1,49 @@
+type Flight {
+  flightId: ID!
+  origin: String!
+  destination: String!
+  departureDate: String!
+  availableSeats: Int!
+  price: Float!
+}
+
+type Booking {
+  bookingId: ID!
+  userId: ID!
+  flightId: ID!
+  status: BookingStatus!
+  seats: Int!
+  totalPrice: Float!
+  createdAt: String!
+  executionArn: String
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  CANCELLED
+}
+
+type LoyaltyBalance {
+  userId: ID!
+  points: Int!
+}
+
+type Query {
+  searchFlights(origin: String!, destination: String!, departureDate: String!): [Flight!]!
+  getBooking(bookingId: ID!): Booking
+  getUserBookings: [Booking!]!
+  getLoyaltyBalance: LoyaltyBalance!
+}
+
+type Mutation {
+  createBooking(flightId: ID!, seats: Int!, paymentToken: String!): Booking!
+  cancelBooking(bookingId: ID!): Booking!
+  updateBookingStatus(bookingId: ID!, status: BookingStatus!): Booking @aws_iam
+}
+
+type Subscription {
+  onBookingStatusChange(bookingId: ID!): Booking
+    @aws_subscribe(mutations: ["updateBookingStatus"])
+}
